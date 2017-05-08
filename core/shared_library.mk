@@ -6,6 +6,12 @@ ifndef my_module_multilib
 my_module_multilib := both
 endif
 
+ifneq ($(libchromeCommonCIncludes),)
+libchromeCommonCIncludes += \
+	external/libevent/include \
+	external/modp_b64 
+endif
+
 ifeq ($(my_module_multilib),both)
 ifneq ($(LOCAL_MODULE_PATH),)
 ifneq ($(TARGET_2ND_ARCH),)
