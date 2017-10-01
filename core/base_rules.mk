@@ -260,6 +260,185 @@ event_log_tags :=
 endif
 
 ###########################################################
+## Java: Compile .java files to .class
+###########################################################
+#TODO: pull this into java.make once host and target are combined
+
+java_sources := $(addprefix $(TOP_DIR)$(LOCAL_PATH)/, $(filter %.java,$(LOCAL_SRC_FILES))) $(aidl_java_sources) $(logtags_java_sources) \
+                $(filter %.java,$(LOCAL_GENERATED_SOURCES))
+all_java_sources := $(java_sources) $(addprefix $($(my_prefix)OUT_COMMON_INTERMEDIATES)/, $(filter %.java,$(LOCAL_INTERMEDIATE_SOURCES)))
+
+## Java resources #########################################
+
+# Look for resource files in any specified directories.
+# Non-java and non-doc files will be picked up as resources
+# and included in the output jar file.
+java_resource_file_groups :=
+
+LOCAL_JAVA_RESOURCE_DIRS := $(strip $(LOCAL_JAVA_RESOURCE_DIRS))
+ifneq ($(LOCAL_JAVA_RESOURCE_DIRS),)
+  # This makes a list of words like
+  #     <dir1>::<file1>:<file2> <dir2>::<file1> <dir3>:
+  # where each of the files is relative to the directory it's grouped with.
+  # Directories that don't contain any resource files will result in groups
+  # that end with a colon, and they are stripped out in the next step.
+  java_resource_file_groups += \
+    $(foreach dir,$(LOCAL_JAVA_RESOURCE_DIRS), \
+	$(subst $(space),:,$(strip \
+		$(TOP_DIR)$(LOCAL_PATH)/$(dir): \
+	    $(patsubst ./%,%,$(shell cd $(TOP_DIR)$(LOCAL_PATH)/$(dir) && \
+		find . \
+		    -type d -a -name ".svn" -prune -o \
+		    -type f \
+			-a \! -name "*.java" \
+			-a \! -name "package.html" \
+			-a \! -name "overview.html" \
+			-a \! -name ".*.swp" \
+			-a \! -name ".DS_Store" \
+			-a \! -name "*~" \
+			-print \
+		    )) \
+	)) \
+    )
+  java_resource_file_groups := $(filter-out %:,$(java_resource_file_groups))
+endif # LOCAL_JAVA_RESOURCE_DIRS
+
+LOCAL_JAVA_RESOURCE_FILES := $(strip $(LOCAL_JAVA_RESOURCE_FILES))
+ifneq ($(LOCAL_JAVA_RESOURCE_FILES),)
+  java_resource_file_groups += \
+    $(foreach f,$(LOCAL_JAVA_RESOURCE_FILES), \
+	$(patsubst %/,%,$(dir $(f)))::$(notdir $(f)) \
+     )
+endif # LOCAL_JAVA_RESOURCE_FILES
+
+ifdef java_resource_file_groups
+  # The full paths to all resources, used for dependencies.
+  java_resource_sources := \
+    $(foreach group,$(java_resource_file_groups), \
+	$(addprefix $(word 1,$(subst :,$(space),$(group)))/, \
+	    $(wordlist 2,9999,$(subst :,$(space),$(group))) \
+	) \
+    )
+  # The arguments to jar that will include these files in a jar file.
+  # Quote the file name to handle special characters (such as #) correctly.
+  extra_jar_args := \
+    $(foreach group,$(java_resource_file_groups), \
+	$(addprefix -C "$(word 1,$(subst :,$(space),$(group)))" , \
+	    $(foreach w, $(wordlist 2,9999,$(subst :,$(space),$(group))), "$(w)" ) \
+	) \
+    )
+  java_resource_file_groups :=
+else
+  java_resource_sources :=
+  extra_jar_args :=
+endif # java_resource_file_groups
+
+## PRIVATE java vars ######################################
+# LOCAL_SOURCE_FILES_ALL_GENERATED is set only if the module does not have static source files,
+# but generated source files in its LOCAL_INTERMEDIATE_SOURCE_DIR.
+# You have to set up the dependency in some other way.
+need_compile_java := $(strip $(all_java_sources)$(all_res_assets))$(LOCAL_STATIC_JAVA_LIBRARIES)$(filter true,$(LOCAL_SOURCE_FILES_ALL_GENERATED))
+ifdef need_compile_java
+
+full_static_java_libs := \
+    $(foreach lib,$(LOCAL_STATIC_JAVA_LIBRARIES), \
+      $(call intermediates-dir-for, \
+        JAVA_LIBRARIES,$(lib),$(LOCAL_IS_HOST_MODULE),COMMON)/javalib.jar)
+
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_INSTALL_DIR := $(dir $(LOCAL_INSTALLED_MODULE))
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_CLASS_INTERMEDIATES_DIR := $(intermediates)/classes
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_SOURCE_INTERMEDIATES_DIR := $(intermediates)/src
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JAVA_SOURCES := $(all_java_sources)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JAVA_OBJECTS := $(patsubst %.java,%.class,$(LOCAL_SRC_FILES))
+ifeq ($(my_prefix),TARGET_)
+ifeq ($(LOCAL_SDK_VERSION),)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH := -bootclasspath $(call java-lib-files,core-libart)
+else
+ifeq ($(LOCAL_SDK_VERSION)$(TARGET_BUILD_APPS),current)
+# LOCAL_SDK_VERSION is current and no TARGET_BUILD_APPS.
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH := -bootclasspath $(call java-lib-files,android_stubs_current)
+else ifeq ($(LOCAL_SDK_VERSION)$(TARGET_BUILD_APPS),system_current)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH := -bootclasspath $(call java-lib-files,android_system_stubs_current)
+else
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH := -bootclasspath $(call java-lib-files,sdk_v$(LOCAL_SDK_VERSION))
+endif # current or system_current
+endif # LOCAL_SDK_VERSION
+endif # TARGET_
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_RESOURCE_DIR := $(LOCAL_RESOURCE_DIR)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_ASSET_DIR := $(LOCAL_ASSET_DIR)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_STATIC_JAVA_LIBRARIES := $(full_static_java_libs)
+
+# full_java_libs: The list of files that should be used as the classpath.
+#                 Using this list as a dependency list WILL NOT WORK.
+# full_java_lib_deps: Should be specified as a prerequisite of this module
+#                 to guarantee that the files in full_java_libs will
+#                 be up-to-date.
+ifdef LOCAL_IS_HOST_MODULE
+ifeq ($(USE_CORE_LIB_BOOTCLASSPATH),true)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH := -bootclasspath $(call java-lib-deps,core-libart-hostdex,$(LOCAL_IS_HOST_MODULE))
+
+full_shared_java_libs := $(call java-lib-files,$(LOCAL_JAVA_LIBRARIES),$(LOCAL_IS_HOST_MODULE))
+full_java_lib_deps := $(call java-lib-deps,$(LOCAL_JAVA_LIBRARIES),$(LOCAL_IS_HOST_MODULE))
+else
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_BOOTCLASSPATH :=
+
+full_shared_java_libs := $(addprefix $(HOST_OUT_JAVA_LIBRARIES)/,\
+    $(addsuffix $(COMMON_JAVA_PACKAGE_SUFFIX),$(LOCAL_JAVA_LIBRARIES)))
+full_java_lib_deps := $(full_shared_java_libs)
+endif # USE_CORE_LIB_BOOTCLASSPATH
+else # !LOCAL_IS_HOST_MODULE
+full_shared_java_libs := $(call java-lib-files,$(LOCAL_JAVA_LIBRARIES),$(LOCAL_IS_HOST_MODULE))
+full_java_lib_deps := $(call java-lib-deps,$(LOCAL_JAVA_LIBRARIES),$(LOCAL_IS_HOST_MODULE))
+endif # !LOCAL_IS_HOST_MODULE
+full_java_libs := $(full_shared_java_libs) $(full_static_java_libs) $(LOCAL_CLASSPATH)
+full_java_lib_deps += $(full_static_java_libs) $(LOCAL_CLASSPATH)
+
+# This is set by packages that are linking to other packages that export
+# shared libraries, allowing them to make use of the code in the linked apk.
+apk_libraries := $(sort $(LOCAL_APK_LIBRARIES) $(LOCAL_RES_LIBRARIES))
+ifneq ($(apk_libraries),)
+  link_apk_libraries := \
+      $(foreach lib,$(apk_libraries), \
+        $(call intermediates-dir-for, \
+              APPS,$(lib),,COMMON)/classes.jar)
+
+  # link against the jar with full original names (before proguard processing).
+  full_shared_java_libs += $(link_apk_libraries)
+  full_java_libs += $(link_apk_libraries)
+  full_java_lib_deps += $(link_apk_libraries)
+endif
+
+# This is set by packages that contain instrumentation, allowing them to
+# link against the package they are instrumenting.  Currently only one such
+# package is allowed.
+LOCAL_INSTRUMENTATION_FOR := $(strip $(LOCAL_INSTRUMENTATION_FOR))
+ifdef LOCAL_INSTRUMENTATION_FOR
+  ifneq ($(words $(LOCAL_INSTRUMENTATION_FOR)),1)
+    $(error \
+        $(LOCAL_PATH): Multiple LOCAL_INSTRUMENTATION_FOR members defined)
+  endif
+
+  link_instr_intermediates_dir.COMMON := $(call intermediates-dir-for, \
+      APPS,$(LOCAL_INSTRUMENTATION_FOR),,COMMON)
+  # link against the jar with full original names (before proguard processing).
+  link_instr_classes_jar := $(link_instr_intermediates_dir.COMMON)/classes.jar
+  full_java_libs += $(link_instr_classes_jar)
+  full_java_lib_deps += $(link_instr_classes_jar)
+endif
+
+endif  # need_compile_java
+
+# We may want to add jar manifest or jar resource files even if there is no java code at all.
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_EXTRA_JAR_ARGS := $(extra_jar_args)
+jar_manifest_file :=
+ifneq ($(strip $(LOCAL_JAR_MANIFEST)),)
+jar_manifest_file := $(LOCAL_PATH)/$(LOCAL_JAR_MANIFEST)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JAR_MANIFEST := $(jar_manifest_file)
+else
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JAR_MANIFEST :=
+endif
+
+###########################################################
 ## make clean- targets
 ###########################################################
 cleantarget := clean-$(my_register_name)

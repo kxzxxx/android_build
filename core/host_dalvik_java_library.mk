@@ -31,28 +31,26 @@ ifneq ($(LOCAL_NO_STANDARD_LIBRARIES),true)
   LOCAL_JAVA_LIBRARIES += core-oj-hostdex core-libart-hostdex
 endif
 
+ifeq ($(LOCAL_MODULE),core-libart-hostdex)
+  LOCAL_SRC_FILES += $(openjdk_lambda_stub_files)
+endif
+
 full_classes_compiled_jar := $(intermediates.COMMON)/classes-full-debug.jar
 full_classes_jarjar_jar := $(intermediates.COMMON)/classes-jarjar.jar
 full_classes_jar := $(intermediates.COMMON)/classes.jar
-full_classes_jack := $(intermediates.COMMON)/classes.jack
-jack_check_timestamp := $(intermediates.COMMON)/jack.check.timestamp
+full_classes_desugar_jar := $(intermediates.COMMON)/classes-desugar.jar
 built_dex := $(intermediates.COMMON)/classes.dex
 
 LOCAL_INTERMEDIATE_TARGETS += \
     $(full_classes_compiled_jar) \
     $(full_classes_jarjar_jar) \
-    $(full_classes_jack) \
     $(full_classes_jar) \
-    $(jack_check_timestamp) \
+    $(full_classes_desugar_jar) \
     $(built_dex)
 
 # See comment in java.mk
 ifndef LOCAL_CHECKED_MODULE
-ifdef LOCAL_JACK_ENABLED
-LOCAL_CHECKED_MODULE := $(jack_check_timestamp)
-else
 LOCAL_CHECKED_MODULE := $(full_classes_compiled_jar)
-endif
 endif
 
 #######################################
@@ -101,7 +99,11 @@ $(full_classes_jar): $(full_classes_jarjar_jar) | $(ACP)
 	@echo Copying: $@
 	$(hide) $(ACP) -fp $< $@
 
-ifndef LOCAL_JACK_ENABLED
+
+$(built_dex): PRIVATE_INTERMEDIATES_DIR := $(intermediates.COMMON)
+$(built_dex): PRIVATE_DX_FLAGS := $(LOCAL_DX_FLAGS)
+$(built_dex): $(full_classes_jar) $(DX)
+	$(transform-classes.jar-to-dex)
 
 $(LOCAL_BUILT_MODULE): PRIVATE_DEX_FILE := $(built_dex)
 $(LOCAL_BUILT_MODULE): PRIVATE_SOURCE_ARCHIVE := $(full_classes_jarjar_jar)
@@ -111,48 +113,13 @@ $(LOCAL_BUILT_MODULE): $(built_dex) $(java_resource_sources)
 	$(call initialize-package-file,$(PRIVATE_SOURCE_ARCHIVE),$@)
 	$(add-dex-to-package)
 
-else # LOCAL_JACK_ENABLED
-$(LOCAL_INTERMEDIATE_TARGETS): \
-	PRIVATE_JACK_INTERMEDIATES_DIR := $(intermediates.COMMON)/jack-rsc
-
-ifeq ($(LOCAL_JACK_ENABLED),incremental)
-$(LOCAL_INTERMEDIATE_TARGETS): \
-	PRIVATE_JACK_INCREMENTAL_DIR := $(intermediates.COMMON)/jack-incremental
+ifneq (,$(filter-out current system_current test_current, $(LOCAL_SDK_VERSION)))
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_DEFAULT_APP_TARGET_SDK := $(LOCAL_SDK_VERSION)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_SDK_VERSION := $(LOCAL_SDK_VERSION)
 else
-$(LOCAL_INTERMEDIATE_TARGETS): \
-	PRIVATE_JACK_INCREMENTAL_DIR :=
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_DEFAULT_APP_TARGET_SDK := $(DEFAULT_APP_TARGET_SDK)
+$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_SDK_VERSION := $(PLATFORM_SDK_VERSION)
 endif
-$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JACK_FLAGS := $(GLOBAL_JAVAC_DEBUG_FLAGS) $(LOCAL_JACK_FLAGS)
-$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JACK_VERSION := $(LOCAL_JACK_VERSION)
-$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_JACK_MIN_SDK_VERSION := $(PLATFORM_JACK_MIN_SDK_VERSION)
-
-jack_all_deps := $(java_sources) $(java_resource_sources) $(full_jack_deps) \
-        $(jar_manifest_file) $(proto_java_sources_file_stamp) $(LOCAL_MODULE_MAKEFILE_DEP) \
-        $(LOCAL_ADDITIONAL_DEPENDENCIES) $(JACK)
-$(built_dex): PRIVATE_CLASSES_JACK := $(full_classes_jack)
-$(built_dex): $(jack_all_deps) | setup-jack-server
-	@echo Building with Jack: $@
-	$(jack-java-to-dex)
-
-$(jack_check_timestamp): $(jack_all_deps) | setup-jack-server
-	@echo Checking build with Jack: $@
-	$(jack-check-java)
-
-# $(full_classes_jack) is just by-product of $(built_dex).
-# The dummy command was added because, without it, make misses the fact the $(built_dex) also
-# change $(full_classes_jack).
-$(full_classes_jack): $(built_dex)
-	$(hide) touch $@
-
-$(LOCAL_BUILT_MODULE): PRIVATE_DEX_FILE := $(built_dex)
-$(LOCAL_BUILT_MODULE): $(built_dex) $(java_resource_sources)
-	@echo "Host Jar: $(PRIVATE_MODULE) ($@)"
-	$(create-empty-package)
-	$(add-dex-to-package)
-	$(add-carried-jack-resources)
-
-endif # LOCAL_JACK_ENABLED
 
 USE_CORE_LIB_BOOTCLASSPATH :=
-
 endif

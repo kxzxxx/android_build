@@ -710,30 +710,6 @@ $(foreach lib,$(1),$(call _java-lib-dir,$(lib),true)/classes.jar)
 endef
 
 ###########################################################
-## Convert "core ext framework" to "out/.../classes.jack ..."
-## $(1): library list
-## $(2): Non-empty if IS_HOST_MODULE
-###########################################################
-
-# $(1): library name
-# $(2): Non-empty if IS_HOST_MODULE
-define _jack-lib-full-classes
-$(call _java-lib-dir,$(1),$(2))/classes.jack
-endef
-
-# $(1): library name list
-# $(2): Non-empty if IS_HOST_MODULE
-define jack-lib-files
-$(foreach lib,$(1),$(call _jack-lib-full-classes,$(lib),$(2)))
-endef
-
-# $(1): library name list
-# $(2): Non-empty if IS_HOST_MODULE
-define jack-lib-deps
-$(call jack-lib-files,$(1),$(2))
-endef
-
-###########################################################
 ## Run rot13 on a string
 ## $(1): the string.  Must be one line.
 ###########################################################
@@ -2019,12 +1995,6 @@ define unzip-jar-files
   $(if $(PRIVATE_DONT_DELETE_JAR_META_INF),,$(hide) rm -rf $(2)/META-INF)
 endef
 
-# Call jack
-#
-define call-jack
- JACK_VERSION=$(PRIVATE_JACK_VERSION) $(JACK) $(DEFAULT_JACK_EXTRA_ARGS)
-endef
-
 # Common definition to invoke javac on the host and target.
 #
 # Some historical notes:
@@ -2063,6 +2033,7 @@ $(if $(PRIVATE_JAVA_LAYERS_FILE), $(hide) build/tools/java-layers.py \
     $(PRIVATE_JAVA_LAYERS_FILE) \@$(PRIVATE_CLASS_INTERMEDIATES_DIR)/java-source-list-uniq,)
 $(hide) rm -f $(PRIVATE_CLASS_INTERMEDIATES_DIR)/java-source-list
 $(hide) rm -f $(PRIVATE_CLASS_INTERMEDIATES_DIR)/java-source-list-uniq
+$(hide) rm -f $(PRIVATE_CLASS_INTERMEDIATES_DIR)/classes*.dex
 $(if $(PRIVATE_JAR_EXCLUDE_FILES), $(hide) find $(PRIVATE_CLASS_INTERMEDIATES_DIR) \
     -name $(word 1, $(PRIVATE_JAR_EXCLUDE_FILES)) \
     $(addprefix -o -name , $(wordlist 2, 999, $(PRIVATE_JAR_EXCLUDE_FILES))) \
@@ -2088,120 +2059,6 @@ endef
 define transform-java-to-classes.jar
 @echo "target Java: $(PRIVATE_MODULE) ($(PRIVATE_CLASS_INTERMEDIATES_DIR))"
 $(call compile-java,$(TARGET_JAVAC),$(PRIVATE_BOOTCLASSPATH))
-endef
-
-# Invoke Jack to compile java from source to dex and jack files.
-#
-# Some historical notes:
-# - below we write the list of java files to java-source-list to avoid argument
-#   list length problems with Cygwin
-# - we filter out duplicate java file names because Jack doesn't like them.
-define jack-java-to-dex
-$(hide) rm -f $@
-$(hide) rm -f $(PRIVATE_CLASSES_JACK)
-$(hide) rm -rf $(PRIVATE_JACK_INTERMEDIATES_DIR)
-$(hide) mkdir -p $(dir $@)
-$(hide) mkdir -p $(dir $(PRIVATE_CLASSES_JACK))
-$(hide) mkdir -p $(PRIVATE_JACK_INTERMEDIATES_DIR)
-$(if $(PRIVATE_JACK_INCREMENTAL_DIR),$(hide) mkdir -p $(PRIVATE_JACK_INCREMENTAL_DIR))
-$(call dump-words-to-file,$(PRIVATE_JAVA_SOURCES),$(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list)
-$(hide) if [ -d "$(PRIVATE_SOURCE_INTERMEDIATES_DIR)" ]; then \
-          find $(PRIVATE_SOURCE_INTERMEDIATES_DIR) -name '*.java' >> $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list; \
-fi
-$(hide) tr ' ' '\n' < $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list \
-    | $(NORMALIZE_PATH) | sort -u > $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq
-$(if $(PRIVATE_JACK_PROGUARD_FLAGS), \
-    $(hide) echo -basedirectory $(CURDIR) > $@.flags; \
-    echo $(PRIVATE_JACK_PROGUARD_FLAGS) >> $@.flags; \
-)
-$(if $(PRIVATE_EXTRA_JAR_ARGS),
-    $(hide) mkdir -p $@.res.tmp
-    $(hide) $(call create-empty-package-at,$@.res.tmp.zip)
-    $(hide) $(call add-java-resources-to,$@.res.tmp.zip)
-    $(hide) unzip -qo $@.res.tmp.zip -d $@.res.tmp
-    $(hide) rm $@.res.tmp.zip)
-$(hide) if [ -s $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq ] ; then \
-    export tmpEcjArg="@$(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq"; \
-else \
-    export tmpEcjArg=""; \
-fi; \
-$(call call-jack) \
-    $(strip $(PRIVATE_JACK_FLAGS)) \
-    $(strip $(PRIVATE_JACK_COVERAGE_OPTIONS)) \
-    $(if $(NO_OPTIMIZE_DX), \
-        -D jack.dex.optimize="false") \
-    $(if $(PRIVATE_RMTYPEDEFS), \
-        -D jack.android.remove-typedef="true") \
-    $(addprefix --classpath ,$(strip \
-        $(call normalize-path-list,$(PRIVATE_BOOTCLASSPATH_JAVA_LIBRARIES) $(PRIVATE_ALL_JACK_LIBRARIES)))) \
-    $(addprefix --import ,$(call reverse-list,$(PRIVATE_STATIC_JACK_LIBRARIES))) \
-    $(if $(PRIVATE_EXTRA_JAR_ARGS),--import-resource $@.res.tmp) \
-    -D jack.android.min-api-level=$(PRIVATE_JACK_MIN_SDK_VERSION) \
-    -D jack.import.resource.policy=keep-first \
-    -D jack.import.type.policy=keep-first \
-    --output-jack $(PRIVATE_CLASSES_JACK) \
-    $(if $(PRIVATE_JACK_INCREMENTAL_DIR),--incremental-folder $(PRIVATE_JACK_INCREMENTAL_DIR)) \
-    --output-dex $(PRIVATE_JACK_INTERMEDIATES_DIR) \
-    $(addprefix --config-jarjar ,$(strip $(PRIVATE_JARJAR_RULES))) \
-    $(if $(PRIVATE_JACK_PROGUARD_FLAGS),--config-proguard $@.flags) \
-    $$tmpEcjArg \
-    || ( rm -rf $(PRIVATE_CLASSES_JACK); exit 41 )
-$(hide) mv $(PRIVATE_JACK_INTERMEDIATES_DIR)/classes*.dex $(dir $@)
-$(hide) rm -f $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list
-$(if $(PRIVATE_EXTRA_JAR_ARGS),$(hide) rm -rf $@.res.tmp)
-$(hide) mv $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq $(PRIVATE_JACK_INTERMEDIATES_DIR).java-source-list
-$(if $(PRIVATE_JAR_PACKAGES), $(hide) echo unsupported options PRIVATE_JAR_PACKAGES in $@; exit 53)
-$(if $(PRIVATE_JAR_EXCLUDE_PACKAGES), $(hide) echo unsupported options JAR_EXCLUDE_PACKAGES in $@; exit 53)
-$(if $(PRIVATE_JAR_MANIFEST), $(hide) echo unsupported options JAR_MANIFEST in $@; exit 53)
-endef
-
-# Invoke Jack to compile java source just to check it compiles correctly.
-#
-# Some historical notes:
-# - below we write the list of java files to java-source-list to avoid argument
-#   list length problems with Cygwin
-# - we filter out duplicate java file names because Jack doesn't like them.
-define jack-check-java
-$(hide) rm -f $@
-$(hide) rm -f $@.java-source-list
-$(hide) rm -f $@.java-source-list-uniq
-$(hide) mkdir -p $(dir $@)
-$(if $(PRIVATE_JACK_INCREMENTAL_DIR),$(hide) mkdir -p $(PRIVATE_JACK_INCREMENTAL_DIR))
-$(call dump-words-to-file,$(PRIVATE_JAVA_SOURCES),$@.java-source-list)
-$(hide) if [ -d "$(PRIVATE_SOURCE_INTERMEDIATES_DIR)" ]; then \
-          find $(PRIVATE_SOURCE_INTERMEDIATES_DIR) -name '*.java' >> $@.java-source-list; \
-fi
-$(hide) tr ' ' '\n' < $@.java-source-list \
-    | sort -u > $@.java-source-list-uniq
-$(hide) if [ -s $@.java-source-list-uniq ] ; then \
-	$(call call-jack,$(PRIVATE_JACK_EXTRA_ARGS)) \
-	    $(strip $(PRIVATE_JACK_FLAGS)) \
-	    $(strip $(PRIVATE_JACK_DEBUG_FLAGS)) \
-	    $(addprefix --classpath ,$(strip \
-	        $(call normalize-path-list,$(call reverse-list,$(PRIVATE_STATIC_JACK_LIBRARIES)) $(PRIVATE_BOOTCLASSPATH_JAVA_LIBRARIES) $(PRIVATE_ALL_JACK_LIBRARIES)))) \
-	    -D jack.import.resource.policy=keep-first \
-	    -D jack.android.min-api-level=$(PRIVATE_JACK_MIN_SDK_VERSION) \
-	    -D jack.import.type.policy=keep-first \
-	    $(if $(PRIVATE_JACK_INCREMENTAL_DIR),--incremental-folder $(PRIVATE_JACK_INCREMENTAL_DIR)) \
-	    @$@.java-source-list-uniq; \
-fi
-touch $@
-endef
-
-define transform-jar-to-jack
-	$(hide) mkdir -p $(dir $@)
-	$(hide) mkdir -p $@.tmpjill.res
-	$(hide) unzip -qo $< -d $@.tmpjill.res
-	$(hide) find $@.tmpjill.res -iname "*.class" -delete
-	$(hide) $(call call-jack) \
-	    $(PRIVATE_JACK_FLAGS) \
-        -D jack.import.resource.policy=keep-first \
-        -D jack.import.type.policy=keep-first \
-        -D jack.android.min-api-level=$(PRIVATE_JACK_MIN_SDK_VERSION) \
-	    --import $< \
-	    --import-resource $@.tmpjill.res \
-	    --output-jack $@
-	$(hide) rm -rf $@.tmpjill.res
 endef
 
 # Moves $1.tmp to $1 if necessary. This is designed to be used with
@@ -2269,63 +2126,51 @@ endef
 
 endif  # TARGET_BUILD_APPS
 
+define desugar-classpath
+$(filter-out -classpath -bootclasspath "",$(subst :,$(space),$(1)))
+endef
 
-# Invoke Jack to compile java from source to jack files without shrink or obfuscation.
-#
-# Some historical notes:
-# - below we write the list of java files to java-source-list to avoid argument
-#   list length problems with Cygwin
-# - we filter out duplicate java file names because Jack doesn't like them.
-define java-to-jack
-$(hide) rm -f $@
-$(hide) rm -rf $(PRIVATE_JACK_INTERMEDIATES_DIR)
-$(hide) mkdir -p $(dir $@)
-$(hide) mkdir -p $(PRIVATE_JACK_INTERMEDIATES_DIR)
-$(if $(PRIVATE_JACK_INCREMENTAL_DIR),$(hide) mkdir -p $(PRIVATE_JACK_INCREMENTAL_DIR))
-$(call dump-words-to-file,$(PRIVATE_JAVA_SOURCES),$(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list)
-$(hide) if [ -d "$(PRIVATE_SOURCE_INTERMEDIATES_DIR)" ]; then \
-          find $(PRIVATE_SOURCE_INTERMEDIATES_DIR) -name '*.java' >> $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list; \
-fi
-$(hide) tr ' ' '\n' < $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list \
-    | $(NORMALIZE_PATH) | sort -u > $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq
-$(if $(PRIVATE_JACK_PROGUARD_FLAGS), \
-    $(hide) echo -basedirectory $(CURDIR) > $@.flags; \
-    echo $(PRIVATE_JACK_PROGUARD_FLAGS) >> $@.flags; \
-)
-$(if $(PRIVATE_EXTRA_JAR_ARGS),
-	$(hide) mkdir -p $@.res.tmp
-	$(hide) $(call create-empty-package-at,$@.res.tmp.zip)
-	$(hide) $(call add-java-resources-to,$@.res.tmp.zip)
-	$(hide) unzip -qo $@.res.tmp.zip -d $@.res.tmp
-	$(hide) rm $@.res.tmp.zip)
-$(hide) if [ -s $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq ] ; then \
-    export tmpEcjArg="@$(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq"; \
-else \
-    export tmpEcjArg=""; \
-fi; \
-$(call call-jack) \
-    $(strip $(PRIVATE_JACK_FLAGS)) \
+# Takes an sdk version that might be PLATFORM_VERSION_CODENAME (for example P),
+# returns a number greater than the highest existing sdk version if it is, or
+# the input if it is not.
+define codename-or-sdk-to-sdk
+$(if $(filter $(1),$(PLATFORM_VERSION_CODENAME)),10000,$(1))
+endef
+
+
+# $(1): A .jar file
+define desugar-classes-jar
+# @echo "Desugar: $(PRIVATE_MODULE)"
+@mkdir -p $(dir $(1))
+$(hide) rm -f $(dir $(1))/classes-desugar.jar
+$(hide) java -jar $(DESUGAR) \
+    $(addprefix --bootclasspath_entry ,$(call desugar-bootclasspath,$(PRIVATE_BOOTCLASSPATH))) \
+    $(addprefix --classpath_entry ,$(PRIVATE_ALL_JAVA_LIBRARIES)) \
+    --min_sdk_version $(call codename-or-sdk-to-sdk,$(PRIVATE_DEFAULT_APP_TARGET_SDK)) \
+    --allow_empty_bootclasspath \
+    $(if $(filter --core-library,$(PRIVATE_DX_FLAGS)),--core_library) \
+    -i $(1) -o $(dir $(1))/classes-desugar.jar
+endef
+
+#TODO: use a smaller -Xmx value for most libraries;
+#      only core.jar and framework.jar need a heap this big.
+define transform-classes.jar-to-dex
+$(call desugar-classes-jar,$<)
+@echo "target Dex: $(PRIVATE_MODULE)"
+@mkdir -p $(dir $@)
+$(hide) rm -f $(dir $@)classes*.dex
+$(hide) $(DX) \
+    -JXms16M -JXmx2048M \
+    --dex --multi-dex --output=$(dir $@) \
+    --min-sdk-version=$(call codename-or-sdk-to-sdk,$(PRIVATE_DEFAULT_APP_TARGET_SDK)) \
     $(if $(NO_OPTIMIZE_DX), \
-        -D jack.dex.optimize="false") \
-    $(addprefix --classpath ,$(strip \
-        $(call normalize-path-list,$(PRIVATE_BOOTCLASSPATH_JAVA_LIBRARIES) $(PRIVATE_ALL_JACK_LIBRARIES)))) \
-    $(addprefix --import ,$(call reverse-list,$(PRIVATE_STATIC_JACK_LIBRARIES))) \
-    $(if $(PRIVATE_EXTRA_JAR_ARGS),--import-resource $@.res.tmp) \
-    -D jack.import.resource.policy=keep-first \
-    -D jack.import.type.policy=keep-first \
-    -D jack.android.min-api-level=$(PRIVATE_JACK_MIN_SDK_VERSION) \
-    $(if $(PRIVATE_JACK_INCREMENTAL_DIR),--incremental-folder $(PRIVATE_JACK_INCREMENTAL_DIR)) \
-    --output-jack $@ \
-    $(addprefix --config-jarjar ,$(strip $(PRIVATE_JARJAR_RULES))) \
-    $(if $(PRIVATE_JACK_PROGUARD_FLAGS),--config-proguard $@.flags) \
-    $$tmpEcjArg \
-    || ( rm -f $@ ; exit 41 )
-$(hide) rm -f $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list
-$(if $(PRIVATE_EXTRA_JAR_ARGS),$(hide) rm -rf $@.res.tmp)
-$(hide) mv $(PRIVATE_JACK_INTERMEDIATES_DIR)/java-source-list-uniq $(PRIVATE_JACK_INTERMEDIATES_DIR).java-source-list
-$(if $(PRIVATE_JAR_PACKAGES), $(hide) echo unsupported options PRIVATE_JAR_PACKAGES in $@; exit 53)
-$(if $(PRIVATE_JAR_EXCLUDE_PACKAGES), $(hide) echo unsupported options JAR_EXCLUDE_PACKAGES in $@; exit 53)
-$(if $(PRIVATE_JAR_MANIFEST), $(hide) echo unsupported options JAR_MANIFEST in $@; exit 53)
+        --no-optimize) \
+    $(if $(GENERATE_DEX_DEBUG), \
+	    --debug --verbose \
+	    --dump-to=$(@:.dex=.lst) \
+	    --dump-width=1000) \
+    $(PRIVATE_DX_FLAGS) \
+	$(dir $<)/classes-desugar.jar   
 endef
 
 define transform-classes.jar-to-emma
@@ -2350,7 +2195,11 @@ endef
 # The MacOS jar tool doesn't like creating empty jar files,
 # so we need to give it something.
 define create-empty-package
-$(call create-empty-package-at,$@)
+@mkdir -p $(dir $@)
+$(hide) touch $(dir $@)zipdummy
+$(hide) (cd $(dir $@) && jar cf $(notdir $@) zipdummy)
+$(hide) zip -qd $@ zipdummy
+$(hide) rm $(dir $@)zipdummy
 endef
 
 # Copy an arhchive file and delete any class files and empty folders inside.
@@ -2439,19 +2288,6 @@ $(hide) jar uf $(1) @$(1).jar-arg-list
 @rm -f $(1).jar-arg-list
 endef
 
-# Add resources carried by static Jack libraries.
-#
-define add-carried-jack-resources
- $(hide) if [ -d $(PRIVATE_JACK_INTERMEDIATES_DIR) ] ; then \
-    find $(PRIVATE_JACK_INTERMEDIATES_DIR) -type f | sort \
-        | sed -e "s?^$(PRIVATE_JACK_INTERMEDIATES_DIR)/? -C \"$(PRIVATE_JACK_INTERMEDIATES_DIR)\" \"?" -e "s/$$/\"/" \
-        > $(dir $@)jack_res_jar_flags; \
-    if [ -s $(dir $@)jack_res_jar_flags ] ; then \
-        jar uf $@ @$(dir $@)jack_res_jar_flags; \
-    fi; \
-fi
-endef
-
 # Returns the minSdkVersion of the specified APK as a decimal number. If the
 # version is a codename, returns the current platform SDK version (always a
 # decimal number) instead. If the APK does not specify a minSdkVersion, returns
@@ -2467,8 +2303,6 @@ $$(($(AAPT) dump badging $(1) 2>&1 | grep '^sdkVersion' || echo "sdkVersion:'0'"
     sed -e s/^.*[^0-9].*$$/$(PLATFORM_SDK_VERSION)/)
 endef
 
-# Sign a package using the specified key/cert.
-#
 define sign-package
 $(call sign-package-arg,$@)
 endef

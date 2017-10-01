@@ -9,10 +9,7 @@
 #   COMMON_JAVAC -- Java compiler command with common arguments
 #
 
-ifndef ANDROID_COMPILE_WITH_JACK
-# Defines if compilation with jack is enabled by default.
-ANDROID_COMPILE_WITH_JACK := true
-endif
+ANDROID_COMPILE_WITH_JACK := false
 
 common_jdk_flags := -Xmaxerrs 9999999
 

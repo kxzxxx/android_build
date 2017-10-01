@@ -23,10 +23,6 @@ LOCAL_UNINSTALLABLE_MODULE := true
 LOCAL_IS_STATIC_JAVA_LIBRARY := true
 LOCAL_MODULE_CLASS := JAVA_LIBRARIES
 
-#################################
-include $(BUILD_SYSTEM)/configure_local_jack.mk
-#################################
-
 intermediates.COMMON := $(call local-intermediates-dir,COMMON)
 
 my_res_package :=
@@ -73,13 +69,6 @@ ifneq ($(LOCAL_PROGUARD_ENABLED),custom)
 endif
 
 LOCAL_PROGUARD_FLAGS := $(addprefix -include ,$(proguard_options_file)) $(LOCAL_PROGUARD_FLAGS)
-
-ifdef LOCAL_JACK_ENABLED
-ifndef LOCAL_JACK_PROGUARD_FLAGS
-    LOCAL_JACK_PROGUARD_FLAGS := $(LOCAL_PROGUARD_FLAGS)
-endif
-LOCAL_JACK_PROGUARD_FLAGS := $(addprefix -include ,$(proguard_options_file)) $(LOCAL_JACK_PROGUARD_FLAGS)
-endif # LOCAL_JACK_ENABLED
 
 R_file_stamp := $(intermediates.COMMON)/src/R.stamp
 LOCAL_INTERMEDIATE_TARGETS += $(R_file_stamp)
@@ -140,12 +129,6 @@ $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_RESOURCE_PUBLICS_OUTPUT := $(intermediate
 $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_RESOURCE_DIR := $(LOCAL_RESOURCE_DIR)
 $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_AAPT_INCLUDES := $(framework_res_package_export)
 
-ifneq (,$(filter-out current system_current test_current, $(LOCAL_SDK_VERSION)))
-$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_DEFAULT_APP_TARGET_SDK := $(LOCAL_SDK_VERSION)
-else
-$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_DEFAULT_APP_TARGET_SDK := $(DEFAULT_APP_TARGET_SDK)
-endif
-
 $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_ASSET_DIR :=
 $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_PROGUARD_OPTIONS_FILE := $(proguard_options_file)
 $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_MANIFEST_PACKAGE_NAME :=
@@ -166,11 +149,6 @@ $(R_file_stamp) : $(all_resources) $(full_android_manifest) $(AAPT) $(framework_
 endif  # LOCAL_USE_AAPT2
 
 $(LOCAL_BUILT_MODULE): $(R_file_stamp)
-ifdef LOCAL_JACK_ENABLED
-$(noshrob_classes_jack): $(R_file_stamp)
-$(full_classes_jack): $(R_file_stamp)
-$(jack_check_timestamp): $(R_file_stamp)
-endif # LOCAL_JACK_ENABLED
 $(full_classes_compiled_jar): $(R_file_stamp)
 
 # Rule to build AAR, archive including classes.jar, resource, etc.
