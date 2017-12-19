@@ -22,7 +22,7 @@ ifneq ($(ANDROID_COMPILE_WITH_JACK),true)
 LOCAL_JACK_ENABLED :=
 endif
 
-LOCAL_JACK_ENABLED := $(strip $(LOCAL_JACK_ENABLED))
+LOCAL_JACK_ENABLED :=
 LOCAL_MODULE := $(strip $(LOCAL_MODULE))
 
 valid_jack_enabled_values := full incremental javac_frontend disabled
